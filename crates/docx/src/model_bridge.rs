@@ -226,6 +226,8 @@ pub fn from_shared_model(mut source: craft_wordmodel::Document) -> Result<wordcr
     document.glossary = glossary.into_iter().map(|g| glossary_value_from_shared(g, &mut graphics)).collect::<Result<_, _>>()?;
     document.missing_pictures = missing_pictures_from_shared(missing_pictures)?;
     document.fit_state = fit_state;
+    // A control naming a glossary entry for its placeholder takes its text.
+    document.resolve_placeholder_parts();
     Ok(document)
 }
 
@@ -382,6 +384,17 @@ fn missing_pictures_to_shared(source: &wordcraft_doc::MissingPictures) -> Result
 
 /// Converts a WordCraft document to the shared model for serialization.
 pub fn to_shared_model(source: &wordcraft_doc::Document) -> Result<craft_wordmodel::Document, DocxError> {
+    // A control's own placeholder goes in the glossary, so it survives while the control shows
+    // other content.
+    let kept;
+    let source = if source.has_unkept_placeholders() {
+        let mut d = source.clone();
+        d.keep_placeholder_parts();
+        kept = d;
+        &kept
+    } else {
+        source
+    };
     let mut document = craft_wordmodel::Document::new();
     document.body = blocks_to_shared(&source.body)?;
     document.last_section = convert_ref(&source.last_section)?;

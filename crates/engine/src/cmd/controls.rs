@@ -345,6 +345,13 @@ pub fn prepare_edit(s: &mut Session) -> Result<Option<CharProps>, CmdError> {
     Ok(Some(props))
 }
 
+/// Enter in a rich or plain text control inside a paragraph breaks the line instead: a
+/// paragraph break would leave the control around two paragraphs, which a file can only hold as
+/// a block-level control around both, the text before and after it in its paragraph included.
+pub fn breaks_lines(s: &Session) -> bool {
+    s.doc.control_at(&s.sel.focus).is_some_and(|r| !r.control.block && matches!(r.control.kind, ControlKind::RichText | ControlKind::Text { .. }))
+}
+
 /// Enter in a one-line plain text control does nothing.
 pub fn refuses_paragraph(s: &Session) -> bool {
     s.doc.control_at(&s.sel.focus).is_some_and(|r| {
@@ -1184,5 +1191,26 @@ mod editing_tests {
         let i = run(&mut s, "developer.setText", json!({"control": "name", "text": ""}));
         assert_eq!(i["showingPlaceholder"], true);
         assert!(range(&s, "name").control.showing_placeholder);
+    }
+
+    /// Enter in a content control inside a paragraph breaks the line: a paragraph break would
+    /// leave the control around two paragraphs, which a file holds only as a block-level control
+    /// around both, the label before it included. Typed lines do the same. Saved and read back,
+    /// the control is still inside its one paragraph.
+    #[test]
+    fn enter_in_a_control_inside_a_paragraph_breaks_the_line() {
+        let mut s = Session::new(wordcraft_doc::Document::from_text("Label: Ada tail"));
+        run(&mut s, "select.text", json!({"text": "Ada"}));
+        run(&mut s, "developer.richText", json!({"tag": "v"}));
+        let at = range(&s, "v").content_start();
+        s.sel = crate::Selection::caret(wordcraft_doc::Pos { off: at.off + 1, ..at });
+        run(&mut s, "text.newParagraph", json!({}));
+        run(&mut s, "text.insert", json!({"text": "가\n나", "paragraphs": true}));
+        let v = range(&s, "v");
+        assert_eq!((v.start.path == v.end.path, s.doc.control_text(&v).as_str()), (true, "A\n가\n나da"));
+        let back = Session::new(wordcraft_docx::read(&wordcraft_docx::write(&s.doc).unwrap()).unwrap());
+        let v = range(&back, "v");
+        assert!(!v.control.block && v.start.path == v.end.path, "still inside its paragraph");
+        assert_eq!(back.doc.para_paths(StoryRef::Body).len(), s.doc.para_paths(StoryRef::Body).len());
     }
 }

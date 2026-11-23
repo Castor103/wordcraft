@@ -512,6 +512,8 @@ fn outside(doc: &Document, mode: &HoleMode) -> Vec<Piece> {
     for story in stories {
         let mut open: Vec<u32> = Vec::new();
         let mut fillable: Vec<bool> = Vec::new();
+        // Whether each open control (forms mode) is block-level, alongside `fillable`.
+        let mut block: Vec<bool> = Vec::new();
         // In forms mode, only markers that pair open and close holes (orphans stay content).
         let paired = if matches!(mode, HoleMode::Controls) { paired_control_markers(doc, story) } else { HashSet::new() };
         // The perm range or fillable control the walk is inside, innermost last.
@@ -526,6 +528,12 @@ fn outside(doc: &Document, mode: &HoleMode) -> Vec<Piece> {
             let Some(p) = doc.para(story, &path) else { continue };
             let pieces = out.len();
             let mut k = 0;
+            // Forms mode: a block-level control (`w:sdt` around paragraphs) holds its paragraphs
+            // whole, marks included, but its end marker sits before its last paragraph's mark.
+            // Whether the innermost block-level control closed by the paragraph's trailing end
+            // markers is fillable: then that mark is the control's, not protected content
+            // (Enter there gives it the formatting at the split).
+            let mut block_mark: Option<bool> = None;
             for (r, props) in p.run_ranges() {
                 let Some(text) = p.text.get(r.clone()) else { continue };
                 let mut piece = String::new();
@@ -555,15 +563,23 @@ fn outside(doc: &Document, mode: &HoleMode) -> Vec<Piece> {
                                 Some(InlineObject::ControlStart { control }) if paired.contains(&(path.clone(), r.start + i)) => {
                                     flush(&mut out, &mut piece, props, in_hole(&open, &fillable));
                                     fillable.push(control.lock.can_edit());
+                                    block.push(control.block);
                                     boundary = true;
                                 }
                                 Some(InlineObject::ControlEnd) if paired.contains(&(path.clone(), r.start + i)) => {
                                     flush(&mut out, &mut piece, props, in_hole(&open, &fillable));
-                                    fillable.pop();
+                                    let can_edit = fillable.pop() == Some(true);
+                                    if block.pop() == Some(true) && block_mark.is_none() {
+                                        block_mark = Some(can_edit);
+                                    }
                                     boundary = true;
                                 }
                                 _ => {}
                             },
+                        }
+                        // Only end markers may follow a control's end for it to hold the mark.
+                        if !matches!(obj, Some(InlineObject::ControlEnd)) || !boundary {
+                            block_mark = None;
                         }
                         if !boundary && !in_hole(&open, &fillable) {
                             flush(&mut out, &mut piece, props, false);
@@ -571,17 +587,21 @@ fn outside(doc: &Document, mode: &HoleMode) -> Vec<Piece> {
                         }
                         continue;
                     }
+                    block_mark = None;
                     if !in_hole(&open, &fillable) {
                         piece.push(c);
                     }
                 }
                 flush(&mut out, &mut piece, props, in_hole(&open, &fillable));
             }
-            if !in_hole(&open, &fillable) {
+            // A fillable block-level control's last mark is its own, but the table, row and cell
+            // around the control are not: they stay protected as before.
+            let control_mark = !in_hole(&open, &fillable) && block_mark == Some(true);
+            if !in_hole(&open, &fillable) && !control_mark {
                 out.push(Piece::Mark(Box::new(p.props.clone()), p.mark.clone()));
             }
             let ancestors = (1..path.0.len()).filter_map(|n| path.0.get(..n));
-            if out.len() > pieces {
+            if out.len() > pieces || control_mark {
                 protected.extend(ancestors.clone().map(<[u32]>::to_vec));
             }
             holding.extend(ancestors.map(<[u32]>::to_vec));

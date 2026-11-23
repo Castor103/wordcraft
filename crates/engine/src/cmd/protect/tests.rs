@@ -1095,3 +1095,63 @@ fn typing_boundary_keeps_duplicate_ids_across_stories_and_start_precedence() {
     // A start to the right wins over an end to the left.
     assert_eq!(typing_pos(&s, &Pos::body(0, 3)), Pos::body(0, 6));
 }
+
+/// A document read from WordprocessingML whose body is `body`.
+fn docx_body(body: &str) -> Document {
+    let xml = format!(r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{body}</w:body></w:document>"#);
+    let rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="main" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+    let mut zip = craft_zip::Writer::new();
+    for (name, value) in [("word/document.xml", xml.as_str()), ("_rels/.rels", rels)] {
+        zip.add(name, value.as_bytes(), craft_zip::Compression::Deflated).unwrap();
+    }
+    wordcraft_docx::read(&zip.finish().unwrap()).unwrap()
+}
+
+/// A block-level control (`w:sdt` around a paragraph) alone in a table cell, as forms have it:
+/// its paragraph mark's formatting (`w:bCs`) differs from its text's (a font).
+const BLOCK_CONTROL_IN_A_CELL: &str = r#"<w:tbl><w:tr><w:tc><w:sdt><w:sdtPr><w:tag w:val="cause"/><w:id w:val="7"/><w:lock w:val="sdtLocked"/></w:sdtPr><w:sdtContent><w:p><w:pPr><w:rPr><w:bCs/></w:rPr></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/></w:rPr><w:t>Root cause</w:t></w:r></w:p></w:sdtContent></w:sdt></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p>"#;
+
+/// Filling in forms: a block-level control holds its paragraphs whole, marks included, so Enter
+/// and typed lines inside it add paragraphs inside the control — even where the text's
+/// formatting differs from the paragraph mark's, which the split gives the new paragraph.
+#[test]
+fn forms_mode_enter_in_a_block_control_adds_a_paragraph_inside_it() {
+    let mut s = Session::new(docx_body(BLOCK_CONTROL_IN_A_CELL));
+    s.run("review.restrict", &json!({"mode": "forms"})).unwrap();
+    let cause = |s: &Session| s.doc.control_ranges(StoryRef::Body).into_iter().find(|r| r.control.tag == "cause").unwrap();
+    let at = cause(&s).content_start();
+    s.sel = Selection::caret(Pos { off: at.off + "Root".len(), ..at });
+    s.run("text.newParagraph", &json!({})).unwrap();
+    s.run("text.insert", &json!({"text": "가\n나", "paragraphs": true})).unwrap();
+    assert_eq!(s.doc.control_text(&cause(&s)), "Root\n가\n나 cause");
+    // Saved, the new paragraphs are in the control's content.
+    let bytes = wordcraft_docx::write(&s.doc).unwrap();
+    let limits = craft_zip::Limits { max_entries: 10_000, max_total_bytes: 64 << 20 };
+    let xml = String::from_utf8(craft_zip::Archive::open(&bytes, limits).unwrap().read("word/document.xml", 16 << 20).unwrap().unwrap()).unwrap();
+    let content = xml.split("<w:sdtContent>").nth(1).and_then(|c| c.split("</w:sdtContent>").next()).unwrap();
+    assert_eq!(content.matches("<w:p>").count() + content.matches("<w:p ").count(), 3, "{xml}");
+    // Outside the control the document stays locked.
+    select(&mut s, "After");
+    assert!(s.run("text.newParagraph", &json!({})).is_err());
+}
+
+/// The cell around a block-level control isn't the control's: its table, row and cell
+/// formatting stay protected while the control is filled in.
+#[test]
+fn forms_mode_block_control_in_a_cell_does_not_open_the_table() {
+    let mut s = Session::new(docx_body(BLOCK_CONTROL_IN_A_CELL));
+    s.run("review.restrict", &json!({"mode": "forms"})).unwrap();
+    select(&mut s, "cause");
+    let before = s.doc.clone();
+    for (id, v) in [
+        ("table.properties", json!({"align": "center"})),
+        ("table.rowHeight", json!({"height": 40})),
+        ("table.shading", json!({"color": "FF0000"})),
+        ("table.cellAlign", json!({"value": "bottomRight"})),
+        ("table.borders", json!({"kind": "none"})),
+    ] {
+        let e = s.run(id, &v).unwrap_err().to_string();
+        assert!(e.contains("only the editable regions"), "{id}: {e}");
+        assert_eq!(s.doc, before, "{id}");
+    }
+}

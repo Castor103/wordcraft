@@ -64,6 +64,9 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("developer.chooseItem", "Choose List Item", LOC, choose_item)
             .params(r#"{"control"?: tag or title, "at"?: pos, "index"?: number, "value"?: string, "text"?: string}"#),
         CommandSpec::new("developer.setDate", "Set Date", LOC, set_date).params(r#"{"control"?: tag or title, "at"?: pos, "date": "YYYY-MM-DD"}"#),
+        CommandSpec::new("developer.setText", "Set Content Control Text", LOC, set_text).params(
+            r#"{"control"?: tag or title, "at"?: pos, "text": string} (rich and plain text controls; each line a paragraph in a block-level rich text control, a line break elsewhere; a one-line plain text control takes one line; "" shows the placeholder) → the control"#,
+        ),
         CommandSpec::new("developer.removeControl", "Remove Content Control", LOC, remove_control).params(r#"{"control"?: tag or title, "at"?: pos}"#),
     ]
 }
@@ -554,6 +557,9 @@ pub fn describe(s: &Session, r: &ControlRange) -> Value {
         "text": if c.showing_placeholder { String::new() } else { s.doc.control_text(r) },
         "start": super::pos_json(&r.start),
         "end": super::pos_json(&r.end),
+        // The content alone, markers excluded: what `select.range` should take to replace it.
+        "contentStart": super::pos_json(&r.content_start()),
+        "contentEnd": super::pos_json(&r.end),
     });
     match &c.kind {
         ControlKind::Text { multi_line } => out["multiLine"] = json!(multi_line),
@@ -726,6 +732,73 @@ fn set_date(s: &mut Session, v: &Value) -> CmdResult {
     }
     s.sel = Selection::caret(after(&end));
     Ok(json!({"date": format!("{y:04}-{m:02}-{d:02}"), "text": text}))
+}
+
+/// `developer.setText`: replace a rich or plain text control's content with `text`, shaped like
+/// the control: each line a paragraph in a block-level rich text control, a line break in a
+/// multi-line plain text control or a control inside a paragraph. A one-line plain text control
+/// refuses more than one line. No text empties the control, which shows its placeholder again,
+/// as deleting its content does. Controls with their own commands (check box, list, date,
+/// picture, galleries, repeating sections) are refused.
+fn set_text(s: &mut Session, v: &Value) -> CmdResult {
+    let text = p::req_str(v, "text")?;
+    if text.len() > super::paste::MAX_PASTE_BYTES {
+        return Err(CmdError::Params(format!("developer.setText: `text` is over {} bytes", super::paste::MAX_PASTE_BYTES)));
+    }
+    let r = target(s, v)?;
+    let one_line = match r.control.kind {
+        ControlKind::RichText => false,
+        ControlKind::Text { multi_line } => !multi_line,
+        _ => {
+            return Err(CmdError::Disabled(
+                "developer.setText: not a text content control (use its own command: toggle, choose or set the date)".into(),
+            ));
+        }
+    };
+    if !r.control.lock.can_edit() {
+        return Err(locked(s, CANT_EDIT));
+    }
+    let text = text.replace("\r\n", "\n");
+    let lines: Vec<String> = text.split(['\n', '\r', '\u{2029}']).map(|l| l.chars().filter(|c| !c.is_control() || *c == '\t').collect()).collect();
+    if lines.len() > super::text::MAX_TYPED_PARAGRAPHS {
+        return Err(CmdError::Params(format!("developer.setText: at most {} lines", super::text::MAX_TYPED_PARAGRAPHS)));
+    }
+    if one_line && lines.len() > 1 {
+        return Err(CmdError::Disabled("developer.setText: this plain text content control takes one line".into()));
+    }
+    // Over a placeholder the text takes the control's own run properties, as typing does
+    // ([`prepare_edit`]); else the content's formatting.
+    let props = match (&r.control.run_props, r.control.showing_placeholder) {
+        (Some(rp), true) => content_props(&s.doc, rp),
+        (None, true) => CharProps { style: None, ..content_base(s, &r) },
+        _ => content_base(s, &r),
+    };
+    let paragraphs = r.control.block && matches!(r.control.kind, ControlKind::RichText);
+    let first = if paragraphs { lines.first().cloned().unwrap_or_default() } else { lines.join("\n") };
+    let mut end = set_content(s, &r, &first, &props)?;
+    if paragraphs {
+        for line in lines.iter().skip(1) {
+            let at = s.doc.split_paragraph(&end)?;
+            end = s.doc.insert_text(&at, line, &props)?;
+        }
+    }
+    if let Some(c) = s.doc.control_mut(&r.start) {
+        c.showing_placeholder = false;
+    }
+    if lines.len() == 1 && first.is_empty() {
+        s.sel = Selection::caret(r.content_start());
+        restore_placeholder(s)?;
+    }
+    // The control's start marker is where it was: only the content after it changed.
+    let now = s
+        .doc
+        .control_ranges(r.start.story)
+        .into_iter()
+        .find(|x| x.start == r.start)
+        .ok_or_else(|| CmdError::Failed("the content control moved".into()))?;
+    s.sel = Selection::caret(after(&now.end));
+    s.goal_x = None;
+    Ok(describe(s, &now))
 }
 
 /// Just after the end marker at `end` (the caret leaves a control whose value was chosen).
@@ -1024,5 +1097,92 @@ mod editing_tests {
             assert!(kinds.contains(&k), "{k:?} in {kinds:?}");
         }
         assert_eq!(doc.plain_text(StoryRef::Body), s.doc.plain_text(StoryRef::Body));
+    }
+
+    fn range(s: &Session, tag: &str) -> wordcraft_doc::control::ControlRange {
+        s.doc.control_ranges(StoryRef::Body).into_iter().find(|r| r.control.tag == tag).unwrap_or_else(|| panic!("no control {tag:?}"))
+    }
+
+    /// `developer.control` gives the content's range: selecting `contentStart`..`contentEnd`
+    /// selects the control's text and no marker, so typing over it works in a protected form.
+    #[test]
+    fn control_info_gives_the_content_range() {
+        let mut s = Session::new(wordcraft_doc::Document::from_text("Name: Ada here"));
+        run(&mut s, "select.text", json!({"text": "Ada"}));
+        run(&mut s, "developer.richText", json!({"tag": "name"}));
+        run(&mut s, "review.restrict", json!({"mode": "forms"}));
+        let i = run(&mut s, "developer.control", json!({"control": "name"}));
+        run(&mut s, "select.range", json!({"anchor": i["contentStart"], "focus": i["contentEnd"]}));
+        run(&mut s, "text.insert", json!({"text": "Bea"}));
+        assert_eq!(run(&mut s, "developer.control", json!({"control": "name"}))["text"], "Bea");
+        assert!(text(&s).starts_with("Name: ") && text(&s).ends_with(" here"), "{}", text(&s));
+    }
+
+    /// `developer.setText` replaces a control's content in one command, found by tag, and keeps
+    /// the control, its tag and its lock, also in a protected form. Lines take the control's
+    /// shape: paragraphs in a block-level rich text control, line breaks in one inside a
+    /// paragraph. One undo step brings the old content back.
+    #[test]
+    fn set_text_fills_a_control_by_tag_with_lines_shaped_like_the_control() {
+        let mut s = Session::new(wordcraft_doc::Document::from_text("Intro.\nOld cause.\nName: Ada here"));
+        run(&mut s, "select.text", json!({"text": "Old cause."}));
+        run(&mut s, "developer.richText", json!({"tag": "cause"}));
+        run(&mut s, "developer.properties", json!({"control": "cause", "lockDelete": true}));
+        run(&mut s, "select.text", json!({"text": "Ada"}));
+        run(&mut s, "developer.richText", json!({"tag": "name"}));
+        run(&mut s, "review.restrict", json!({"mode": "forms"}));
+        let r = run(&mut s, "developer.setText", json!({"control": "cause", "text": "가\n나"}));
+        assert_eq!(r["text"], "가\n나");
+        let cause = range(&s, "cause");
+        assert!(cause.control.block && cause.start.path != cause.end.path, "a paragraph per line, inside the control");
+        assert!(!cause.control.lock.can_delete(), "the lock stays");
+        run(&mut s, "developer.setText", json!({"control": "name", "text": "Bea\nCy"}));
+        let name = range(&s, "name");
+        assert_eq!(name.start.path, name.end.path, "a line break, not a new paragraph");
+        assert_eq!(s.doc.control_text(&name), "Bea\nCy");
+        assert!(text(&s).starts_with("Intro."));
+        run(&mut s, "edit.undo", json!({}));
+        assert_eq!(s.doc.control_text(&range(&s, "name")), "Ada");
+    }
+
+    /// A one-line plain text control refuses lines and stays as it was; a multi-line one takes
+    /// them as line breaks. Controls with their own commands (check box, list, date, picture)
+    /// and content-locked ones are refused.
+    #[test]
+    fn set_text_keeps_the_controls_rules() {
+        let mut s = Session::new(wordcraft_doc::Document::from_text("A one\nB two\nC three"));
+        run(&mut s, "select.text", json!({"text": "one"}));
+        run(&mut s, "developer.plainText", json!({"tag": "one"}));
+        run(&mut s, "select.text", json!({"text": "two"}));
+        run(&mut s, "developer.plainText", json!({"tag": "multi"}));
+        run(&mut s, "developer.properties", json!({"control": "multi", "multiLine": true}));
+        run(&mut s, "select.text", json!({"text": "three"}));
+        run(&mut s, "developer.richText", json!({"tag": "frozen"}));
+        run(&mut s, "developer.properties", json!({"control": "frozen", "lockEdit": true}));
+        let end = s.doc.end_of(StoryRef::Body);
+        s.sel = crate::Selection::caret(end);
+        run(&mut s, "developer.checkBox", json!({"tag": "box"}));
+        let before = s.doc.clone();
+        for (tag, line) in [("one", "x\ny"), ("box", "x"), ("frozen", "x")] {
+            assert!(s.run("developer.setText", &json!({"control": tag, "text": line})).is_err(), "{tag}");
+            assert_eq!(s.doc, before, "{tag}");
+        }
+        run(&mut s, "developer.setText", json!({"control": "one", "text": "x"}));
+        assert_eq!(s.doc.control_text(&range(&s, "one")), "x");
+        run(&mut s, "developer.setText", json!({"control": "multi", "text": "x\ny"}));
+        let multi = range(&s, "multi");
+        assert_eq!((multi.start.path == multi.end.path, s.doc.control_text(&multi).as_str()), (true, "x\ny"));
+    }
+
+    /// Setting no text empties the control, which shows its placeholder again, as deleting its
+    /// content does.
+    #[test]
+    fn set_text_with_nothing_shows_the_placeholder() {
+        let mut s = Session::new(wordcraft_doc::Document::from_text("Name: Ada here"));
+        run(&mut s, "select.text", json!({"text": "Ada"}));
+        run(&mut s, "developer.richText", json!({"tag": "name"}));
+        let i = run(&mut s, "developer.setText", json!({"control": "name", "text": ""}));
+        assert_eq!(i["showingPlaceholder"], true);
+        assert!(range(&s, "name").control.showing_placeholder);
     }
 }

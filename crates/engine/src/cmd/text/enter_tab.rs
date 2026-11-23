@@ -56,11 +56,15 @@ fn sample_text(s: &Session) -> Option<String> {
     Some(text)
 }
 
-/// `text.newParagraph`: Enter, unless the selection is in a control that takes no paragraph break.
+/// `text.newParagraph`: Enter, unless the selection is in a control that takes no paragraph break
+/// (nothing happens) or sits inside a paragraph (a line break, [`crate::cmd::controls::breaks_lines`]).
 pub(super) fn new_paragraph(s: &mut Session, _: &Value) -> CmdResult {
     // Enter in a one-line plain text control (or a check box or list) does nothing, as in Word.
     if crate::cmd::controls::refuses_paragraph(s) {
         return sel_result(s);
+    }
+    if crate::cmd::controls::breaks_lines(s) {
+        return ins_char(s, '\n');
     }
     enter(s, true)?;
     sel_result(s)
@@ -89,7 +93,11 @@ pub(super) fn insert_paragraphs(s: &mut Session, text: &str) -> CmdResult {
             if crate::cmd::controls::refuses_paragraph(s) {
                 return Err(CmdError::Disabled("text.insert: this content control takes no paragraph breaks".into()));
             }
-            enter(s, false)?;
+            if crate::cmd::controls::breaks_lines(s) {
+                type_text(s, "\n")?;
+            } else {
+                enter(s, false)?;
+            }
         }
         if !line.is_empty() {
             type_text(s, line)?;

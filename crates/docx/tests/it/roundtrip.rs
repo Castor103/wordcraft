@@ -1611,6 +1611,20 @@ fn settings_core_theme_round_trip() {
     assert_eq!(rt(&w).settings.watermark, w.settings.watermark);
 }
 
+/// The core properties beyond File › Info's (`dc:identifier`, `dc:language`,
+/// `cp:contentStatus`, `cp:version`, `cp:lastPrinted`) survive a save instead of being dropped.
+#[test]
+fn every_core_property_survives_a_save() {
+    let mut d = Document::default();
+    d.core.title = "Form".into();
+    d.core.identifier = "NCR-001".into();
+    d.core.language = "ko-KR".into();
+    d.core.content_status = "Draft".into();
+    d.core.version = "1.3".into();
+    d.core.last_printed = "2026-03-01T00:00:00Z".into();
+    assert_eq!(rt(&d).core, d.core);
+}
+
 fn part_xml(bytes: &[u8], name: &str) -> String {
     let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
     let mut xml = String::new();

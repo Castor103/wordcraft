@@ -66,6 +66,14 @@ pub struct CoreProps {
     pub created: String,
     pub modified: String,
     pub revision: u32,
+    /// The rest of the package's core properties (ECMA-376 Part 2 §11), kept as read so a
+    /// save doesn't drop them: `dc:identifier`, `dc:language`, `cp:contentStatus`,
+    /// `cp:version` and `cp:lastPrinted` (ISO 8601).
+    pub identifier: String,
+    pub language: String,
+    pub content_status: String,
+    pub version: String,
+    pub last_printed: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

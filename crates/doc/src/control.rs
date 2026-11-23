@@ -27,6 +27,18 @@ const MAX_DEPTH: usize = 16;
 pub const MAX_CONTROL_TEXT: usize = 1024;
 /// Most list entries a combo box or drop-down list keeps.
 pub const MAX_LIST_ITEMS: usize = 1000;
+/// The glossary gallery content control placeholders are kept in (`w:gallery`).
+pub const PLACEHOLDER_GALLERY: &str = "placeholder";
+
+/// Placeholder text as a control keeps it: one line, bounded.
+fn placeholder_line(s: &str) -> String {
+    s.chars().filter(|c| *c != OBJ).map(|c| if c.is_control() { ' ' } else { c }).take(MAX_CONTROL_TEXT).collect::<String>().trim().to_string()
+}
+
+/// FNV-1a over `text`, from `seed`: a stable name for a placeholder's glossary entry.
+fn placeholder_hash(text: &str, seed: u64) -> u64 {
+    text.bytes().fold(0xcbf2_9ce4_8422_2325 ^ seed, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3))
+}
 
 /// What may be done to a control (`w:lock`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
@@ -510,6 +522,92 @@ fn balance_list(bl: &mut Blocks) -> usize {
 impl Document {
     fn control_stories(&self) -> Vec<StoryRef> {
         std::iter::once(StoryRef::Body).chain(self.parts.keys().map(|k| StoryRef::Part(*k))).collect()
+    }
+
+    /// The text of glossary entry `name`, as a placeholder line.
+    fn glossary_line(&self, name: &str) -> Option<String> {
+        let e = self.glossary.iter().find(|e| e.name == name)?;
+        let text: Vec<String> = e.blocks.iter().filter_map(|b| b.as_para()).map(|p| p.text.clone()).collect();
+        Some(placeholder_line(&text.join(" ")))
+    }
+
+    /// After reading a file: a control naming a glossary entry for its placeholder
+    /// (`w:placeholder/w:docPart`, ECMA-376 §17.5.2.25) takes its text as its placeholder,
+    /// whether it shows it now or not.
+    pub fn resolve_placeholder_parts(&mut self) {
+        if self.glossary.is_empty() {
+            return;
+        }
+        for story in self.control_stories() {
+            for r in self.control_ranges(story) {
+                if r.control.placeholder.is_empty() {
+                    continue;
+                }
+                let Some(text) = self.glossary_line(&r.control.placeholder).filter(|t| !t.is_empty() && *t != r.control.placeholder_text) else {
+                    continue;
+                };
+                if let Some(c) = self.control_mut(&r.start) {
+                    c.placeholder_text = text;
+                }
+            }
+        }
+    }
+
+    /// The controls with a placeholder of their own (not their kind's default) that no glossary
+    /// entry holds: where each starts, its placeholder, and the entry name it gives when no
+    /// entry has that name (kept, so the file's reference stays as it was).
+    fn unkept_placeholders(&self) -> Vec<(Pos, String, Option<String>)> {
+        let mut out = Vec::new();
+        for story in self.control_stories() {
+            for r in self.control_ranges(story) {
+                let c = &r.control;
+                let own = placeholder_line(&c.placeholder_text);
+                if own.is_empty() || own == c.kind.default_placeholder() {
+                    continue;
+                }
+                let named = (!c.placeholder.is_empty()).then(|| c.placeholder.clone());
+                match named.as_deref().map(|n| self.glossary_line(n)) {
+                    Some(Some(text)) if text == own => {}
+                    Some(None) => out.push((r.start, own, named)),
+                    _ => out.push((r.start, own, None)),
+                }
+            }
+        }
+        out
+    }
+
+    /// Whether [`Self::keep_placeholder_parts`] has anything to do.
+    pub fn has_unkept_placeholders(&self) -> bool {
+        !self.unkept_placeholders().is_empty()
+    }
+
+    /// Before writing a file: a control's own placeholder lives in the glossary, so it survives
+    /// while the control shows other content. A control naming an entry the glossary lacks gets
+    /// it under that name; otherwise each text gets one entry, named after it and shared by the
+    /// controls that show it.
+    pub fn keep_placeholder_parts(&mut self) {
+        for (start, text, named) in self.unkept_placeholders() {
+            let (a, b) = (placeholder_hash(&text, 0), placeholder_hash(&text, 1));
+            // The control's own entry name while no entry holds other text under it.
+            let name = named.filter(|n| self.glossary_line(n).is_none_or(|t| t == text)).unwrap_or_else(|| format!("Placeholder_{a:016X}"));
+            if self.glossary_line(&name).is_none() {
+                let mut p = crate::Paragraph::new();
+                let _ = p.insert_text(0, &text, &crate::props::CharProps::default());
+                self.glossary.push(crate::BuildingBlock {
+                    name: name.clone(),
+                    gallery: PLACEHOLDER_GALLERY.into(),
+                    category: "General".into(),
+                    guid: format!("{{{:08X}-{:04X}-{:04X}-{:04X}-{:012X}}}", a >> 32, (a >> 16) & 0xFFFF, a & 0xFFFF, b >> 48, b & 0xFFFF_FFFF_FFFF),
+                    types: vec!["bbPlcHdr".into()],
+                    behaviors: vec!["content".into()],
+                    blocks: vec![crate::compare::para_block(p)],
+                    ..Default::default()
+                });
+            }
+            if let Some(c) = self.control_mut(&start) {
+                c.placeholder = name;
+            }
+        }
     }
 
     /// The whole content controls of a story (around paragraph content), in the order they close.

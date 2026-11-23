@@ -21,6 +21,17 @@ pub(crate) fn write_parts(doc: &Document, flavor: Flavor) -> Result<Vec<(String,
     } else {
         doc
     };
+    // A control's own placeholder goes in the glossary, so it survives while the control shows
+    // other content.
+    let kept;
+    let doc = if doc.has_unkept_placeholders() {
+        let mut d = doc.clone();
+        d.keep_placeholder_parts();
+        kept = d;
+        &kept
+    } else {
+        doc
+    };
     let mut wr = Writer {
         eq_number: 0,
         doc,

@@ -332,6 +332,7 @@ fn read_opened_in(pkg: &Package, chunks: ChunkState) -> Result<(Document, usize,
         r.read_vba_related(&v);
     }
     r.read_glossary(&rels);
+    r.doc.resolve_placeholder_parts();
     r.keep_custom_xml(&root_rels, &rels);
     r.keep_unmodelled(&root, &root_rels, &rels);
     if !r.embedded.parts.is_empty() {

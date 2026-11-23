@@ -1213,4 +1213,27 @@ mod editing_tests {
         assert!(!v.control.block && v.start.path == v.end.path, "still inside its paragraph");
         assert_eq!(back.doc.para_paths(StoryRef::Body).len(), s.doc.para_paths(StoryRef::Body).len());
     }
+
+    /// A control's own placeholder text is kept in the file's glossary (`w:placeholder`), so it
+    /// survives a save while the control shows other content: emptied after the file is read
+    /// back, the control shows it again. Saving again adds no second entry, and a control with
+    /// its kind's default placeholder adds none.
+    #[test]
+    fn a_controls_own_placeholder_survives_a_save_while_it_shows_content() {
+        let mut s = Session::new(wordcraft_doc::Document::from_text("Name: Ada here, Role: Dev"));
+        run(&mut s, "select.text", json!({"text": "Dev"}));
+        run(&mut s, "developer.richText", json!({"tag": "role"}));
+        run(&mut s, "select.text", json!({"text": "Ada"}));
+        run(&mut s, "developer.richText", json!({"tag": "name"}));
+        run(&mut s, "developer.properties", json!({"control": "name", "placeholder": "이름을 입력하세요."}));
+        run(&mut s, "developer.setText", json!({"control": "name", "text": "Bea"}));
+        let once = wordcraft_docx::read(&wordcraft_docx::write(&s.doc).unwrap()).unwrap();
+        assert_eq!(range(&Session::new(once.clone()), "name").control.placeholder_shown(), "이름을 입력하세요.");
+        let twice = wordcraft_docx::read(&wordcraft_docx::write(&once).unwrap()).unwrap();
+        assert_eq!(twice.glossary.len(), once.glossary.len(), "no second entry");
+        assert_eq!(once.glossary.len(), 1, "one entry, for the control with its own placeholder");
+        let mut back = Session::new(twice);
+        run(&mut back, "developer.setText", json!({"control": "name", "text": ""}));
+        assert_eq!(run(&mut back, "developer.control", json!({"control": "name"}))["placeholder"], "이름을 입력하세요.");
+    }
 }

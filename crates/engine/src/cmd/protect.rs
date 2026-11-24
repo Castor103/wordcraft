@@ -481,6 +481,10 @@ enum Piece {
     Text(String, CharProps),
     Object(Option<InlineObject>),
     Mark(Box<wordcraft_doc::ParaProps>, CharProps),
+    /// The mark of a paragraph an editable region holds whole: its formatting may change, but
+    /// the mark is still there. Leaving it out would let a deletion that merges the paragraph
+    /// into another one (removing that mark) look like no change at all.
+    OwnMark,
     /// Tables nested deeper than the paragraph walk reaches, compared as a whole.
     Deep(String),
     Table(Box<TableProps>, Vec<f32>),
@@ -591,14 +595,17 @@ fn outside(doc: &Document, mode: &HoleMode) -> Vec<Piece> {
                 }
                 flush(&mut out, &mut piece, props, in_hole(&open, &fillable));
             }
-            // A fillable block-level control's last mark is its own, but the table, row and cell
-            // around the control are not: they stay protected as before.
+            // A fillable block-level control's last mark is its own: its formatting isn't
+            // compared, only that it is there. The table, row and cell around the control are
+            // not the control's: they stay protected.
             let control_mark = !in_hole(&open, &fillable) && block_mark == Some(true);
-            if !in_hole(&open, &fillable) && !control_mark {
+            if control_mark {
+                out.push(Piece::OwnMark);
+            } else if !in_hole(&open, &fillable) {
                 out.push(Piece::Mark(Box::new(p.props.clone()), p.mark.clone()));
             }
             let ancestors = (1..path.0.len()).filter_map(|n| path.0.get(..n));
-            if out.len() > pieces || control_mark {
+            if out.len() > pieces {
                 protected.extend(ancestors.clone().map(<[u32]>::to_vec));
             }
             holding.extend(ancestors.map(<[u32]>::to_vec));

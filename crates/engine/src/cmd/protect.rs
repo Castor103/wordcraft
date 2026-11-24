@@ -538,6 +538,10 @@ fn outside(doc: &Document, mode: &HoleMode) -> Vec<Piece> {
             // markers is fillable: then that mark is the control's, not protected content
             // (Enter there gives it the formatting at the split).
             let mut block_mark: Option<bool> = None;
+            // Read only and comments: whether the paragraph's trailing end markers closed the
+            // last editable exception open. An exception holding the whole paragraph holds its
+            // mark too, in the same way (checked below: no protected text in the paragraph).
+            let mut perm_mark = false;
             for (r, props) in p.run_ranges() {
                 let Some(text) = p.text.get(r.clone()) else { continue };
                 let mut piece = String::new();
@@ -559,6 +563,7 @@ fn outside(doc: &Document, mode: &HoleMode) -> Vec<Piece> {
                                     if let Some(j) = open.iter().rposition(|x| x == id) {
                                         open.remove(j);
                                     }
+                                    perm_mark |= open.is_empty();
                                     boundary = true;
                                 }
                                 _ => {}
@@ -581,9 +586,11 @@ fn outside(doc: &Document, mode: &HoleMode) -> Vec<Piece> {
                                 _ => {}
                             },
                         }
-                        // Only end markers may follow a control's end for it to hold the mark.
-                        if !matches!(obj, Some(InlineObject::ControlEnd)) || !boundary {
+                        // Only end markers may follow a control's or an exception's end for it to
+                        // hold the mark.
+                        if !matches!(obj, Some(InlineObject::ControlEnd | InlineObject::PermEnd { .. })) || !boundary {
                             block_mark = None;
+                            perm_mark = false;
                         }
                         if !boundary && !in_hole(&open, &fillable) {
                             flush(&mut out, &mut piece, props, false);
@@ -592,16 +599,19 @@ fn outside(doc: &Document, mode: &HoleMode) -> Vec<Piece> {
                         continue;
                     }
                     block_mark = None;
+                    perm_mark = false;
                     if !in_hole(&open, &fillable) {
                         piece.push(c);
                     }
                 }
                 flush(&mut out, &mut piece, props, in_hole(&open, &fillable));
             }
-            // A fillable block-level control's last mark is its own: its formatting isn't
-            // compared, only that it is there. The table, row and cell around the control are
-            // not the control's: they stay protected.
-            let control_mark = !in_hole(&open, &fillable) && block_mark == Some(true);
+            // A fillable block-level control's last mark is its own, and so is that of an exception
+            // holding its whole paragraph (none of the paragraph's text is protected: its
+            // formatting reaches no locked text). Its formatting isn't compared, only that it is
+            // there. The table, row and cell around either are not theirs: they stay protected.
+            let whole_exception = perm_mark && out.len() == pieces && matches!(mode, HoleMode::Perms(_));
+            let control_mark = !in_hole(&open, &fillable) && (block_mark == Some(true) || whole_exception);
             if control_mark {
                 out.push(Piece::OwnMark);
             } else if !in_hole(&open, &fillable) {

@@ -1155,3 +1155,24 @@ fn forms_mode_block_control_in_a_cell_does_not_open_the_table() {
         assert_eq!(s.doc, before, "{id}");
     }
 }
+
+/// Filling in forms: a block-level control's last mark may take new formatting, but it can't
+/// go. Backspace at the start of a control right after another one would merge their
+/// paragraphs, removing the first control's mark: refused, the document as it was.
+#[test]
+fn forms_mode_backspace_does_not_merge_two_block_controls() {
+    let ctl = |tag: &str, text: &str| {
+        format!(
+            r#"<w:sdt><w:sdtPr><w:tag w:val="{tag}"/><w:lock w:val="sdtLocked"/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:sdtContent></w:sdt>"#
+        )
+    };
+    let mut s = Session::new(docx_body(&format!("{}{}<w:p><w:r><w:t>After</w:t></w:r></w:p>", ctl("a", "Alpha"), ctl("b", "Bravo"))));
+    s.run("review.restrict", &json!({"mode": "forms"})).unwrap();
+    let b = s.doc.control_ranges(StoryRef::Body).into_iter().find(|r| r.control.tag == "b").unwrap();
+    let before = s.doc.clone();
+    for at in [b.content_start(), Pos { off: 0, ..b.start.clone() }] {
+        s.sel = Selection::caret(at);
+        assert!(s.run("text.backspace", &json!({})).is_err());
+        assert_eq!(s.doc, before);
+    }
+}

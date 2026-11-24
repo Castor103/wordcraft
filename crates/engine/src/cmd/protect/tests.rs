@@ -1162,3 +1162,44 @@ fn forms_mode_backspace_does_not_merge_two_block_controls() {
         assert_eq!(s.doc, before);
     }
 }
+
+/// A read-only exception around a whole paragraph whose mark is formatted unlike its text
+/// (`w:bCs` against a font), as forms have it.
+fn exception_around(paragraph_text: &str, before: &str) -> Document {
+    docx_body(&format!(
+        r#"<w:p><w:r><w:t>Head</w:t></w:r></w:p><w:p><w:pPr><w:rPr><w:bCs/></w:rPr></w:pPr>{before}<w:permStart w:id="1" w:edGrp="everyone"/><w:r><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/></w:rPr><w:t>{paragraph_text}</w:t></w:r><w:permEnd w:id="1"/></w:p><w:p><w:r><w:t>Tail</w:t></w:r></w:p>"#
+    ))
+}
+
+/// Read only: an exception that holds a whole paragraph holds its mark too, as a block-level
+/// control does in forms mode, so Enter in it adds a paragraph inside the exception even where
+/// the text is formatted unlike the mark. The text around it stays locked.
+#[test]
+fn read_only_enter_in_an_exception_around_a_whole_paragraph_adds_a_paragraph() {
+    let mut s = Session::new(exception_around("Fill in here", ""));
+    s.run("review.restrict", &json!({"mode": "readOnly"})).unwrap();
+    select(&mut s, "Fill");
+    let at = s.sel.ordered().1;
+    s.sel = Selection::caret(at);
+    s.run("text.newParagraph", &json!({})).unwrap();
+    s.run("text.insert", &json!({"text": "가\n나", "paragraphs": true})).unwrap();
+    let range = s.doc.perm_ranges().into_iter().next().unwrap();
+    assert!(range.start.path != range.end.path, "the new paragraphs are inside the exception");
+    let before = s.doc.plain_text(StoryRef::Body);
+    select(&mut s, "Tail");
+    assert!(s.run("text.newParagraph", &json!({})).is_err());
+    assert_eq!(s.doc.plain_text(StoryRef::Body), before);
+}
+
+/// An exception that starts after locked text in its paragraph doesn't own the paragraph's
+/// mark: its paragraph formatting, which reaches the locked text, stays protected.
+#[test]
+fn read_only_exception_after_locked_text_keeps_the_paragraph_formatting_locked() {
+    let mut s = Session::new(exception_around("Fill in here", r#"<w:r><w:t xml:space="preserve">Locked: </w:t></w:r>"#));
+    s.run("review.restrict", &json!({"mode": "readOnly"})).unwrap();
+    select(&mut s, "Fill");
+    let before = s.doc.clone();
+    let e = s.run("para.align", &json!({"value": "center"})).unwrap_err().to_string();
+    assert!(e.contains("only the editable regions"), "{e}");
+    assert_eq!(s.doc, before);
+}

@@ -67,6 +67,16 @@ impl WordApp {
     pub(super) fn paint_window(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, t: theme::Tokens) {
         let window = self.windows.shown();
         let moved = |app: &WordApp| app.windows.shown() != window;
+        // Simple editing ([`crate::simple`]): the row of buttons and the page, nothing else. The
+        // File view never opens there.
+        if self.simple_edit {
+            self.ui.backstage = false;
+            crate::simple::toolbar(self, ui);
+            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.canvas)).show(ui, |ui| {
+                canvas::show(self, ui);
+            });
+            return;
+        }
         if self.ui.backstage {
             backstage::show(self, ui);
         } else if !self.has_document() {

@@ -69,6 +69,7 @@ pub mod ribbon_fit;
 pub mod rtl;
 pub mod ruler_tabs;
 pub mod scroll;
+pub mod simple;
 pub mod system_clipboard;
 pub mod table_mouse;
 pub mod table_pen;
@@ -698,6 +699,10 @@ pub struct WordApp {
     /// language picker or Language packs list: load an installed Arabic font when no embedded face
     /// covers it (dev builds without craft-fonts).
     pub(crate) want_system_arabic: bool,
+    /// A host shows the window as a plain body editor ([`simple`]): no title bar, ribbon, File
+    /// view, panes or status bar, one row of buttons, a short context menu, and pastes that keep
+    /// the text only. Host code sets it; no command does.
+    pub simple_edit: bool,
     /// The document (id, revision) whose comment text [`WordApp::ensure_comment_fonts`] last
     /// looked at.
     comment_fonts_for: Option<(u64, u64)>,

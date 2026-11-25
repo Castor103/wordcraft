@@ -209,6 +209,7 @@ pub fn show(app: &mut WordApp, ctx: &egui::Context, selection: Rect, viewport: R
 /// own controls; the standalone selection toolbar remains hidden while this popup is open.
 pub fn context_menu_visible(app: &WordApp) -> bool {
     app.ui.mini_toolbar
+        && !app.simple_edit
         && !app.session.view.read_mode
         && app.session.math.is_none()
         && app.session.cell_range().is_none()

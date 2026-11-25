@@ -171,6 +171,30 @@ const { data } = await wordcraft.screenshot();            // the canvas as PNG (
 
 The API is there in every mode, with or without a host. Opening a file, handing a saved or exported file to the page, the file name and the unsaved flag stay with the host messages above.
 
+## Simple editing (`?mode=simple`)
+
+A page that uses WordCraft as a plain body editor, beside its own form, can add `?mode=simple` to
+the app's URL (alone, or with `?host=parent` or `data-host="page"`). It is set when the app starts
+and nothing in the app turns it off.
+
+- **Not drawn:** the title bar, the ribbon, the File tab and its Backstage view, the task panes,
+  the rulers, the status bar and the selection's mini toolbar. Without a document the app shows a blank page,
+  not the Start screen.
+- **One row of buttons** above the page: Undo, Redo, Bold, Italic, Underline, Bullets and
+  Numbering. Each is greyed out where the document's editing restrictions refuse it, so after
+  `review.restrict` with `readOnly`, or `forms` outside a content control, they do nothing.
+- **Keys:** typing, Enter, Tab, Backspace and Delete, moving and selecting, Undo and Redo, Cut,
+  Copy and Paste, Save, and the shortcuts of the row's commands work. Every other shortcut
+  (other formats, alignment, styles, breaks, Find, dialogs, panes, Open, Print, key tips) does
+  nothing.
+- **The context menu** offers Cut, Copy and Paste.
+- **Every paste keeps the text only**, from the keyboard, the menu or another program: a copy
+  from another document brings no fonts, colours or pictures in. A picture on the clipboard and a
+  file dropped on the window are not inserted.
+- **The page is not limited.** `window.wordcraft` runs every command, so the page can restrict
+  editing, fill content controls and read the document as before. `wordcraft:save` and
+  `wordcraft:dirty` are sent as in the full editor.
+
 ## Renderer selection and fallback flags
 
 WordCraft renders with wgpu. It uses **WebGPU** when the browser has it and falls back to

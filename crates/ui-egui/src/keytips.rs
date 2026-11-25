@@ -711,6 +711,7 @@ use crate::keys;
 /// so the next letter is typed and never picks a page that is no longer there.
 pub fn suppressed(app: &WordApp, ctx: &egui::Context) -> bool {
     !app.ui.keytips_enabled
+        || app.simple_edit
         || (app.ui.backstage && app.ui.keytips != Phase::Backstage)
         || (!app.ui.backstage && app.ui.keytips == Phase::Backstage)
         || app.dialog.is_some()

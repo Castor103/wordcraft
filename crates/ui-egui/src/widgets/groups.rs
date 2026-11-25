@@ -240,6 +240,10 @@ pub fn command_icon(id: &str) -> &str {
 /// Right-click on a command's button: put it on (or take it off) the Quick Access Toolbar, or
 /// open Customize Ribbon (#379).
 pub fn command_menu(resp: &Response, app: &mut WordApp, id: &str) {
+    // Simple editing has no toolbar or ribbon to customize.
+    if app.simple_edit {
+        return;
+    }
     crate::rtl::context_menu(resp, |ui| {
         let known = app.session.registry.get(id).is_some();
         let on_qat = app.session.ribbon.qat().contains(&id);

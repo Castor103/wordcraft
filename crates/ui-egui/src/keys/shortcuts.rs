@@ -122,6 +122,11 @@ pub(super) fn dispatch(app: &mut WordApp, key: Key, m: Modifiers) -> bool {
     let bound = name.and_then(|n| app.session.keymap.resolve(&reg, &combo(m, n, true)));
     // Ctrl+F1 collapses the ribbon only when the user hasn't given it to a command (#1678); the
     // other interface shortcuts (Alt+Q, ⌘⌥R) keep their place ahead of the keymap.
+    // Simple editing runs no interface shortcut, and of the bound ones only typing, moving, the
+    // clipboard and the button row's commands: the key is taken and does nothing else.
+    if app.simple_edit && (ui_shortcut(key, m).is_some() || bound.is_some_and(|spec| !crate::simple::key_runs(spec.id))) {
+        return true;
+    }
     if let Some((id, params)) = ui_shortcut(key, m).filter(|_| key != Key::F1 || bound.is_none()) {
         let _ = app.run(id, params);
         return true;

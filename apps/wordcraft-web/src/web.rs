@@ -91,8 +91,12 @@ pub fn start() {
                         app.session.set_document(doc);
                     }
                     let mut prefs = crate::prefs::PrefsSync::new(stored);
+                    // `?mode=simple`: a plain body editor for a host page (`wordcraft_ui_egui::simple`).
+                    app.simple_edit = simple_mode(query_param("mode").as_deref());
                     // No document to show: start on File › Home, as the desktop app does (#766).
-                    if !sample {
+                    // A simple editor has no File view: it shows a blank page until the host's
+                    // document arrives.
+                    if !sample && !app.simple_edit {
                         app.start_screen();
                     }
                     // The host's name for the user signs this visit's work, but isn't stored as the
@@ -130,6 +134,11 @@ fn query() -> String {
 
 fn query_param(key: &str) -> Option<String> {
     web_sys::UrlSearchParams::new_with_str(&query()).ok()?.get(key)
+}
+
+/// `?mode=simple` asks for simple editing; any other value, or none, is the full editor.
+fn simple_mode(mode: Option<&str>) -> bool {
+    mode == Some("simple")
 }
 
 /// Wraps the app to read dropped files asynchronously (browsers can't read them synchronously)
@@ -186,7 +195,9 @@ impl eframe::App for WebShell {
         if ui.ctx().current_pass_index() == 0 {
             let ctx = ui.ctx().clone();
             let dropped = ctx.input_mut(|i| std::mem::take(&mut i.raw.dropped_files));
-            for f in dropped {
+            // A simple editor edits the host's document: a dropped file is neither opened nor
+            // inserted.
+            for f in dropped.into_iter().filter(|_| !self.app.simple_edit) {
                 let inbox = self.inbox.clone();
                 let ctx = ctx.clone();
                 wasm_bindgen_futures::spawn_local(async move {

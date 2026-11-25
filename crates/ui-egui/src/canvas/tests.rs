@@ -2577,6 +2577,54 @@ fn context_menu_offers_the_ribbons_paste_items() {
     }
 }
 
+/// Simple editing (`crate::simple`): the context menu offers the clipboard only, and its Paste
+/// keeps the text only, even of WordCraft's own copy.
+#[test]
+fn a_simple_windows_context_menu_offers_the_clipboard_and_pastes_text() {
+    use egui_kittest::kittest::Queryable;
+    let mut a = WordApp::new(wordcraft_engine::Session::new(wordcraft_doc::Document::from_text("Bold\nTarget")), Default::default());
+    a.session.doc.format_range(&Pos::body(0, 0), &Pos::body(0, 4), &|c| c.bold = Some(true)).unwrap();
+    a.session.relayout();
+    a.run("select.text", json!({"text": "Bold"})).unwrap();
+    a.run("edit.copy", json!({})).unwrap();
+    a.simple_edit = true;
+    let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1440.0, 900.0)).build_ui_state(
+        |ui, app: &mut WordApp| {
+            let ctx = ui.ctx().clone();
+            app.logic(&ctx);
+            app.ui(ui);
+        },
+        a,
+    );
+    for _ in 0..6 {
+        h.step();
+    }
+    let c = h.state_mut().session.layout().caret(&Pos::body(1, 6)).expect("laid out");
+    let at = page_to_screen(h.state_mut(), c.page, c.x, c.top + c.height / 2.0).expect("on screen");
+    h.event(egui::Event::PointerMoved(at));
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Secondary, pressed, modifiers: Default::default() });
+        h.step();
+    }
+    h.step();
+    for (label, id) in crate::simple::MENU {
+        let l = format!("{} {}", tl!(label), crate::widgets::shortcut_text(h.state(), id));
+        assert!(h.query_by_label(&l).is_some(), "{l:?} is offered");
+    }
+    for gone in ["Keep Text Only", "Merge Formatting", "Paste Special…", "Font…", "Paragraph…", "Link…", "New Comment"] {
+        assert!(h.query_by_label_contains(gone).is_none(), "{gone} is not offered");
+    }
+    let paste = format!("Paste {}", crate::widgets::shortcut_text(h.state(), "edit.paste"));
+    h.get_by_label(&paste).click();
+    for _ in 0..3 {
+        h.step();
+    }
+    let doc = &h.state().session.doc;
+    assert_eq!(doc.plain_text(StoryRef::Body), "Bold\nTargetBold", "pasted at the end of the second paragraph");
+    let p = doc.para_at(&Pos::body(1, 0)).expect("the target paragraph");
+    assert_ne!(p.props_of_char(7).bold, Some(true), "without the copy's bold");
+}
+
 /// Word's frame around the equation being edited: as wide as the equation plus the options
 /// strip at its right, as tall as its line, with the grip over its top-left corner. The
 /// strip and grip keep their screen size at every zoom.

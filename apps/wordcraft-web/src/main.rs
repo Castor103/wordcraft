@@ -12,7 +12,9 @@
 //! document to open and stores what WordCraft saves (`host`). A page can also host WordCraft in
 //! its own document (no iframe) with `data-host="page"` on the canvas, talking over DOM
 //! `CustomEvent`s on the canvas. `&author=` names the user for comments and tracked changes in
-//! either host mode.
+//! either host mode. `?mode=simple` makes a plain body editor: no title bar, ribbon, File view or
+//! status bar, one row of buttons, and pastes that keep the text only
+//! (`wordcraft_ui_egui::simple`).
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 #[cfg(any(target_arch = "wasm32", test))]

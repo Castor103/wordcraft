@@ -60,10 +60,6 @@ pub(crate) fn issue_heading(issue: &serde_json::Value) -> String {
 }
 
 pub(super) fn context_menu(app: &mut WordApp, ui: &mut Ui) {
-    if app.session.math.is_some() {
-        return equation_menu(app, ui);
-    }
-    ui.set_min_width(220.0);
     let item = |ui: &mut Ui, app: &mut WordApp, label: &str, id: &str, params: serde_json::Value| {
         let sc = crate::widgets::shortcut_text(app, id);
         let on = crate::widgets::enabled(app, id);
@@ -72,6 +68,18 @@ pub(super) fn context_menu(app: &mut WordApp, ui: &mut Ui) {
             ui.close();
         }
     };
+    // Simple editing: the clipboard only (its Paste keeps the text only, [`crate::simple`]).
+    if app.simple_edit {
+        ui.set_min_width(180.0);
+        for (label, id) in crate::simple::MENU {
+            item(ui, app, label, id, json!({}));
+        }
+        return;
+    }
+    if app.session.math.is_some() {
+        return equation_menu(app, ui);
+    }
+    ui.set_min_width(220.0);
     if let Some(issue) = app.canvas.context_issue.clone() {
         let sugg: Vec<String> = issue
             .get("suggestions")

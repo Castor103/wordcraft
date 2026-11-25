@@ -74,6 +74,11 @@ impl WordApp {
         let pictures = std::mem::take(&mut *pasted.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
         let target = paste_target(self.canvas.focused, self.ui.backstage, self.dialog.is_some() || self.file_dialog_open());
         for (_, bytes) in pictures {
+            // Simple editing pastes text only: a picture on the clipboard is not inserted.
+            if self.simple_edit {
+                log::debug!("pasted picture ignored: simple editing pastes text only");
+                continue;
+            }
             if !target {
                 log::debug!("pasted picture ignored: the document is not the edit target");
                 continue;

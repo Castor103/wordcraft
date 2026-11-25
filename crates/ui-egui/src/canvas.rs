@@ -556,7 +556,9 @@ fn prepare_view(app: &mut WordApp, ui: &Ui, full: Rect, layout: &DocLayout) -> C
         let p = page_render_options(app, false).blank_paper();
         Color32::from_rgb(p.0, p.1, p.2)
     };
+    // A simple editor has no rulers: their markers set indents and tab stops.
     let show_ruler = app.session.view.ruler
+        && !app.simple_edit
         && app.session.view.mode == wordcraft_layout::ViewMode::Print
         && !read_mode
         && crate::chrome::Screen::of(&app.session.view) == crate::chrome::Screen::Normal;
@@ -1450,6 +1452,7 @@ fn finish_canvas_frame(finish: CanvasFinish<'_>, out: egui::scroll_area::ScrollA
     crate::mini_toolbar::track_dismissal(app, ui.ctx(), area);
     if let Some(sel) = app.canvas.mini_anchor
         && app.ui.mini_toolbar
+        && !app.simple_edit
     {
         crate::mini_toolbar::show(app, ui.ctx(), sel, out.inner_rect);
     }

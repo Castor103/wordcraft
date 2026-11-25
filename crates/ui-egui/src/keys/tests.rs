@@ -1356,3 +1356,36 @@ fn delete_previous_sentence_shortcut_dispatches_and_can_be_reassigned() {
     assert!(!app.session.sel.is_collapsed());
     assert_eq!(app.session.doc.para_at(&app.session.sel.focus).unwrap().text, "First. Second sentence.");
 }
+
+/// Simple editing (`crate::simple`): typing, the row's own shortcuts and the clipboard keys
+/// run; any other formatting, inserting or dialog shortcut does nothing.
+#[test]
+fn simple_editing_runs_only_its_own_shortcuts() {
+    let ctx = egui::Context::default();
+    let mut a = WordApp::new(wordcraft_engine::Session::new(wordcraft_doc::Document::from_text("Hello")), Default::default());
+    a.simple_edit = true;
+    a.run("select.all", json!({})).unwrap();
+    let ctrl = Modifiers { ctrl: true, command: true, ..Default::default() };
+    let press = |a: &mut WordApp, key: Key, m: Modifiers| mods_frame(&ctx, a, m, vec![key_event(key, true, m), key_event(key, false, m)]);
+    let bold = |a: &mut WordApp| a.session.run("format.state", &json!({})).unwrap()["bold"].as_bool().unwrap_or(false);
+    press(&mut a, Key::B, ctrl);
+    assert!(bold(&mut a), "Mod+B bolds");
+    let rev = a.session.rev();
+    // Center, a page break, Strikethrough, Grow Font, Repeat.
+    press(&mut a, Key::E, ctrl);
+    press(&mut a, Key::Enter, ctrl);
+    press(&mut a, Key::X, Modifiers { shift: true, ..ctrl });
+    press(&mut a, Key::Period, Modifiers { shift: true, ..ctrl });
+    press(&mut a, Key::F4, Modifiers::NONE);
+    assert_eq!(a.session.rev(), rev, "no other format or insert ran");
+    // The Font dialog, Find and the Ctrl+F1 ribbon switch.
+    press(&mut a, Key::D, ctrl);
+    press(&mut a, Key::F, ctrl);
+    press(&mut a, Key::F1, ctrl);
+    assert!(a.dialog.is_none() && !a.session.view.nav_pane, "no dialog or pane opened");
+    press(&mut a, Key::Z, ctrl);
+    assert!(!bold(&mut a), "Mod+Z undoes");
+    press(&mut a, Key::End, Modifiers::NONE);
+    press(&mut a, Key::Enter, Modifiers::NONE);
+    assert_eq!(a.session.doc.plain_text(wordcraft_doc::StoryRef::Body).matches('\n').count(), 1, "Enter adds a paragraph");
+}
